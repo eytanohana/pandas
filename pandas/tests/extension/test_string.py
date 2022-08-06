@@ -18,7 +18,11 @@ import string
 import numpy as np
 import pytest
 
+from pandas.compat import pa_version_under6p0
+from pandas.errors import PerformanceWarning
+
 import pandas as pd
+import pandas._testing as tm
 from pandas.core.arrays import ArrowStringArray
 from pandas.core.arrays.string_ import StringDtype
 from pandas.tests.extension import base
@@ -139,7 +143,14 @@ class TestIndex(base.BaseIndexTests):
 
 
 class TestMissing(base.BaseMissingTests):
-    pass
+    def test_dropna_array(self, data_missing):
+        with tm.maybe_produces_warning(
+            PerformanceWarning,
+            pa_version_under6p0 and data_missing.dtype.storage == "pyarrow",
+        ):
+            result = data_missing.dropna()
+        expected = data_missing[[1]]
+        self.assert_extension_array_equal(result, expected)
 
 
 class TestNoReduce(base.BaseNoReduceTests):
@@ -156,9 +167,48 @@ class TestNoReduce(base.BaseNoReduceTests):
 
 
 class TestMethods(base.BaseMethodsTests):
-    @pytest.mark.xfail(reason="returns nullable: GH 44692")
-    def test_value_counts_with_normalize(self, data):
-        super().test_value_counts_with_normalize(data)
+    def test_argmin_argmax(
+        self, data_for_sorting, data_missing_for_sorting, na_value, request
+    ):
+        if pa_version_under6p0 and data_missing_for_sorting.dtype.storage == "pyarrow":
+            request.node.add_marker(
+                pytest.mark.xfail(
+                    raises=NotImplementedError,
+                    reason="min_max not supported in pyarrow",
+                )
+            )
+        super().test_argmin_argmax(data_for_sorting, data_missing_for_sorting, na_value)
+
+    @pytest.mark.parametrize(
+        "op_name, skipna, expected",
+        [
+            ("idxmax", True, 0),
+            ("idxmin", True, 2),
+            ("argmax", True, 0),
+            ("argmin", True, 2),
+            ("idxmax", False, np.nan),
+            ("idxmin", False, np.nan),
+            ("argmax", False, -1),
+            ("argmin", False, -1),
+        ],
+    )
+    def test_argreduce_series(
+        self, data_missing_for_sorting, op_name, skipna, expected, request
+    ):
+        if (
+            pa_version_under6p0
+            and data_missing_for_sorting.dtype.storage == "pyarrow"
+            and skipna
+        ):
+            request.node.add_marker(
+                pytest.mark.xfail(
+                    raises=NotImplementedError,
+                    reason="min_max not supported in pyarrow",
+                )
+            )
+        super().test_argreduce_series(
+            data_missing_for_sorting, op_name, skipna, expected
+        )
 
 
 class TestCasting(base.BaseCastingTests):

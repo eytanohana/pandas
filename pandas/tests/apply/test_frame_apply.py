@@ -1551,3 +1551,55 @@ def test_nuisance_depr_passes_through_warnings():
     df = DataFrame({"a": [1, 2, 3]})
     with tm.assert_produces_warning(UserWarning, match="Hello, World!"):
         df.agg([foo])
+
+
+def test_apply_type():
+    # GH 46719
+    df = DataFrame(
+        {"col1": [3, "string", float], "col2": [0.25, datetime(2020, 1, 1), np.nan]},
+        index=["a", "b", "c"],
+    )
+
+    # applymap
+    result = df.applymap(type)
+    expected = DataFrame(
+        {"col1": [int, str, type], "col2": [float, datetime, float]},
+        index=["a", "b", "c"],
+    )
+    tm.assert_frame_equal(result, expected)
+
+    # axis=0
+    result = df.apply(type, axis=0)
+    expected = Series({"col1": Series, "col2": Series})
+    tm.assert_series_equal(result, expected)
+
+    # axis=1
+    result = df.apply(type, axis=1)
+    expected = Series({"a": Series, "b": Series, "c": Series})
+    tm.assert_series_equal(result, expected)
+
+
+def test_apply_on_empty_dataframe():
+    # GH 39111
+    df = DataFrame({"a": [1, 2], "b": [3, 0]})
+    result = df.head(0).apply(lambda x: max(x["a"], x["b"]), axis=1)
+    expected = Series([])
+    tm.assert_series_equal(result, expected)
+
+
+@pytest.mark.parametrize(
+    "test, constant",
+    [
+        ({"a": [1, 2, 3], "b": [1, 1, 1]}, {"a": [1, 2, 3], "b": [1]}),
+        ({"a": [2, 2, 2], "b": [1, 1, 1]}, {"a": [2], "b": [1]}),
+    ],
+)
+def test_unique_agg_type_is_series(test, constant):
+    # GH#22558
+    df1 = DataFrame(test)
+    expected = Series(data=constant, index=["a", "b"], dtype="object")
+    aggregation = {"a": "unique", "b": "unique"}
+
+    result = df1.agg(aggregation)
+
+    tm.assert_series_equal(result, expected)

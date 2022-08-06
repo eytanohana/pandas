@@ -10,6 +10,7 @@ import re
 import sys
 from typing import (
     IO,
+    TYPE_CHECKING,
     DefaultDict,
     Hashable,
     Iterator,
@@ -38,15 +39,16 @@ from pandas.util._exceptions import find_stack_level
 from pandas.core.dtypes.common import is_integer
 from pandas.core.dtypes.inference import is_dict_like
 
-from pandas import (
-    Index,
-    MultiIndex,
-)
-
 from pandas.io.parsers.base_parser import (
     ParserBase,
     parser_defaults,
 )
+
+if TYPE_CHECKING:
+    from pandas import (
+        Index,
+        MultiIndex,
+    )
 
 # BOM character (byte order mark)
 # This exists at the beginning of a file to indicate endianness
@@ -308,7 +310,11 @@ class PythonParser(ParserBase):
         }, names
 
     # legacy
-    def get_chunk(self, size=None):
+    def get_chunk(
+        self, size: int | None = None
+    ) -> tuple[
+        Index | None, Sequence[Hashable] | MultiIndex, Mapping[Hashable, ArrayLike]
+    ]:
         if size is None:
             # error: "PythonParser" has no attribute "chunksize"
             size = self.chunksize  # type: ignore[attr-defined]
@@ -379,10 +385,16 @@ class PythonParser(ParserBase):
                         line = self._next_line()
 
                 except StopIteration as err:
-                    if self.line_pos < hr:
+                    if 0 < self.line_pos <= hr and (
+                        not have_mi_columns or hr != header[-1]
+                    ):
+                        # If no rows we want to raise a different message and if
+                        # we have mi columns, the last line is not part of the header
+                        joi = list(map(str, header[:-1] if have_mi_columns else header))
+                        msg = f"[{','.join(joi)}], len of {len(joi)}, "
                         raise ValueError(
-                            f"Passed header={hr} but only {self.line_pos + 1} lines in "
-                            "file"
+                            f"Passed header={msg}"
+                            f"but only {self.line_pos} lines in file"
                         ) from err
 
                     # We have an empty file, so check
@@ -933,7 +945,11 @@ class PythonParser(ParserBase):
                 implicit_first_cols = len(line) - self.num_original_columns
 
             # Case 0
-            if next_line is not None:
+            if (
+                next_line is not None
+                and self.header is not None
+                and index_col is not False
+            ):
                 if len(next_line) == len(line) + self.num_original_columns:
                     # column and index names on diff rows
                     self.index_col = list(range(len(line)))

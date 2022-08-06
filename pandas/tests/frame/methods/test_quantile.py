@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from pandas.compat.numpy import np_percentile_argname
+from pandas.compat.numpy import (
+    np_percentile_argname,
+    np_version_under1p21,
+)
 
 import pandas as pd
 from pandas import (
@@ -655,7 +658,7 @@ class TestQuantileExtensionDtype:
             result = obj.quantile(qs, numeric_only=False)
         return result
 
-    def test_quantile_ea(self, obj, index):
+    def test_quantile_ea(self, request, obj, index):
 
         # result should be invariant to shuffling
         indexer = np.arange(len(index), dtype=np.intp)
@@ -665,9 +668,19 @@ class TestQuantileExtensionDtype:
         qs = [0.5, 0, 1]
         result = self.compute_quantile(obj, qs)
 
+        if np_version_under1p21 and index.dtype == "timedelta64[ns]":
+            msg = "failed on Numpy 1.20.3; TypeError: data type 'Int64' not understood"
+            mark = pytest.mark.xfail(reason=msg, raises=TypeError)
+            request.node.add_marker(mark)
+
+        exp_dtype = index.dtype
+        if index.dtype == "Int64":
+            # match non-nullable casting behavior
+            exp_dtype = "Float64"
+
         # expected here assumes len(index) == 9
         expected = Series(
-            [index[4], index[0], index[-1]], dtype=index.dtype, index=qs, name="A"
+            [index[4], index[0], index[-1]], dtype=exp_dtype, index=qs, name="A"
         )
         expected = type(obj)(expected)
 
@@ -695,11 +708,11 @@ class TestQuantileExtensionDtype:
 
     # TODO(GH#39763): filtering can be removed after GH#39763 is fixed
     @pytest.mark.filterwarnings("ignore:Using .astype to convert:FutureWarning")
-    def test_quantile_ea_all_na(self, obj, index):
+    def test_quantile_ea_all_na(self, request, obj, index):
         obj.iloc[:] = index._na_value
 
         # TODO(ArrayManager): this casting should be unnecessary after GH#39763 is fixed
-        obj[:] = obj.astype(index.dtype)
+        obj = obj.astype(index.dtype)
         assert np.all(obj.dtypes == index.dtype)
 
         # result should be invariant to shuffling
@@ -710,12 +723,19 @@ class TestQuantileExtensionDtype:
         qs = [0.5, 0, 1]
         result = self.compute_quantile(obj, qs)
 
+        if np_version_under1p21 and index.dtype == "timedelta64[ns]":
+            msg = "failed on Numpy 1.20.3; TypeError: data type 'Int64' not understood"
+            mark = pytest.mark.xfail(reason=msg, raises=TypeError)
+            request.node.add_marker(mark)
+
         expected = index.take([-1, -1, -1], allow_fill=True, fill_value=index._na_value)
         expected = Series(expected, index=qs, name="A")
+        if expected.dtype == "Int64":
+            expected = expected.astype("Float64")
         expected = type(obj)(expected)
         tm.assert_equal(result, expected)
 
-    def test_quantile_ea_scalar(self, obj, index):
+    def test_quantile_ea_scalar(self, request, obj, index):
         # scalar qs
 
         # result should be invariant to shuffling
@@ -726,7 +746,16 @@ class TestQuantileExtensionDtype:
         qs = 0.5
         result = self.compute_quantile(obj, qs)
 
-        expected = Series({"A": index[4]}, dtype=index.dtype, name=0.5)
+        if np_version_under1p21 and index.dtype == "timedelta64[ns]":
+            msg = "failed on Numpy 1.20.3; TypeError: data type 'Int64' not understood"
+            mark = pytest.mark.xfail(reason=msg, raises=TypeError)
+            request.node.add_marker(mark)
+
+        exp_dtype = index.dtype
+        if index.dtype == "Int64":
+            exp_dtype = "Float64"
+
+        expected = Series({"A": index[4]}, dtype=exp_dtype, name=0.5)
         if isinstance(obj, Series):
             expected = expected["A"]
             assert result == expected

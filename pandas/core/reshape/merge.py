@@ -73,7 +73,6 @@ from pandas import (
     MultiIndex,
     Series,
 )
-from pandas.core import groupby
 import pandas.core.algorithms as algos
 from pandas.core.arrays import ExtensionArray
 from pandas.core.arrays._mixins import NDArrayBackedExtensionArray
@@ -85,6 +84,7 @@ from pandas.core.sorting import is_int64_overflow_possible
 
 if TYPE_CHECKING:
     from pandas import DataFrame
+    from pandas.core import groupby
     from pandas.core.arrays import DatetimeArray
 
 
@@ -150,7 +150,7 @@ def _groupby_and_merge(by, left: DataFrame, right: DataFrame, merge_pieces):
     if all(item in right.columns for item in by):
         rby = right.groupby(by, sort=False)
 
-    for key, lhs in lby:
+    for key, lhs in lby.grouper.get_iterator(lby._selected_obj, axis=lby.axis):
 
         if rby is None:
             rhs = right
@@ -1200,23 +1200,27 @@ class _MergeOperation:
 
                 # check whether ints and floats
                 elif is_integer_dtype(rk.dtype) and is_float_dtype(lk.dtype):
-                    if not (lk == lk.astype(rk.dtype))[~np.isnan(lk)].all():
-                        warnings.warn(
-                            "You are merging on int and float "
-                            "columns where the float values "
-                            "are not equal to their int representation.",
-                            UserWarning,
-                        )
+                    # GH 47391 numpy > 1.24 will raise a RuntimeError for nan -> int
+                    with np.errstate(invalid="ignore"):
+                        if not (lk == lk.astype(rk.dtype))[~np.isnan(lk)].all():
+                            warnings.warn(
+                                "You are merging on int and float "
+                                "columns where the float values "
+                                "are not equal to their int representation.",
+                                UserWarning,
+                            )
                     continue
 
                 elif is_float_dtype(rk.dtype) and is_integer_dtype(lk.dtype):
-                    if not (rk == rk.astype(lk.dtype))[~np.isnan(rk)].all():
-                        warnings.warn(
-                            "You are merging on int and float "
-                            "columns where the float values "
-                            "are not equal to their int representation.",
-                            UserWarning,
-                        )
+                    # GH 47391 numpy > 1.24 will raise a RuntimeError for nan -> int
+                    with np.errstate(invalid="ignore"):
+                        if not (rk == rk.astype(lk.dtype))[~np.isnan(rk)].all():
+                            warnings.warn(
+                                "You are merging on int and float "
+                                "columns where the float values "
+                                "are not equal to their int representation.",
+                                UserWarning,
+                            )
                     continue
 
                 # let's infer and see if we are ok
@@ -1691,11 +1695,6 @@ class _OrderedMerge(_MergeOperation):
         return result
 
 
-def _asof_function(direction: str):
-    name = f"asof_join_{direction}"
-    return getattr(libjoin, name, None)
-
-
 def _asof_by_function(direction: str):
     name = f"asof_join_{direction}_on_X_by_Y"
     return getattr(libjoin, name, None)
@@ -2017,8 +2016,16 @@ class _AsOfMerge(_OrderedMerge):
             )
         else:
             # choose appropriate function by type
-            func = _asof_function(self.direction)
-            return func(left_values, right_values, self.allow_exact_matches, tolerance)
+            func = _asof_by_function(self.direction)
+            return func(
+                left_values,
+                right_values,
+                None,
+                None,
+                self.allow_exact_matches,
+                tolerance,
+                False,
+            )
 
 
 def _get_multiindex_indexer(
